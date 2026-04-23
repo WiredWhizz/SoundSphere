@@ -1,0 +1,20 @@
+{
+  "name": "soundsphere-workspace",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "concurrently -k -n backend,frontend -c green,blue \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "lint": "npm --prefix frontend run lint"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "gh-pages": "^6.3.0"
+  },
+  "dependencies": {
+    "git": "^0.1.5",
+    "paes": "^1.1.7"
+  }
+}
