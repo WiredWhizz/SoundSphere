@@ -1,24 +1,16 @@
-import cookieParser from 'cookie-parser'
 import cors from 'cors'
 import dotenv from 'dotenv'
 import express from 'express'
 import rateLimit from 'express-rate-limit'
-import { createSessionCookie, readSessionCookie, SESSION_COOKIE } from './auth.js'
 import { hasDatabaseConfig } from './db.js'
-import {
-  createLocalUser,
-  defaultUserState,
-  getUserByEmail,
-  getUserById,
-  updateUserState,
-  verifyPassword,
-} from './userStore.js'
+import { optionalAuth, requireAuth } from './middleware/authMiddleware.js'
+import { authRoutes } from './routes/authRoutes.js'
+import { defaultUserState, updateUserState } from './userStore.js'
 
 dotenv.config()
 
 const app = express()
 const API_KEY = process.env.YOUTUBE_API_KEY
-const SESSION_SECRET = process.env.SESSION_SECRET || 'change_this_to_a_long_random_secret'
 
 const HOME_SECTIONS = [
   {
@@ -78,32 +70,44 @@ const limiter = rateLimit({
   },
 })
 
+function resolveAllowedOrigins() {
+  return [
+    process.env.CORS_ORIGIN,
+    process.env.VERCEL_FRONTEND_URL,
+    process.env.FRONTEND_ORIGIN,
+  ]
+    .flatMap((value) => (value ? value.split(',') : []))
+    .map((value) => value.trim())
+    .filter(Boolean)
+}
+
+const allowedOrigins = resolveAllowedOrigins()
+
 app.use(
   cors({
-    origin: process.env.FRONTEND_ORIGIN?.split(',').map((origin) => origin.trim()) || '*',
-    credentials: true,
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+        callback(null, true)
+        return
+      }
+
+      callback(new Error('Origin not allowed by CORS.'))
+    },
+    credentials: false,
   }),
 )
-app.use(cookieParser())
 app.use(express.json())
 app.use('/api', limiter)
-
-app.use(async (request, _response, next) => {
-  const session = readSessionCookie(request.cookies[SESSION_COOKIE], SESSION_SECRET)
-
-  if (!session?.userId) {
-    request.user = null
-    next()
-    return
-  }
-
-  const user = await getUserById(session.userId)
-  request.user = user ? { id: session.userId, ...user } : null
-  next()
-})
+app.use(optionalAuth)
+app.use('/api/auth', authRoutes)
 
 app.get('/api/health', (_request, response) => {
-  response.json({ ok: true, app: 'SoundSphere' })
+  response.json({
+    ok: true,
+    app: 'SoundSphere',
+    auth: 'jwt',
+    databaseConfigured: hasDatabaseConfig(),
+  })
 })
 
 function ensureApiKey(response) {
@@ -121,27 +125,9 @@ function ensureDatabase(response) {
   }
 
   response.status(500).json({
-    error: 'MySQL is not configured. Add MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, and MYSQL_DATABASE to backend/.env.',
+    error: 'Database is not configured. Set DATABASE_URL or MYSQL_* variables.',
   })
   return false
-}
-
-function requireAuth(request, response) {
-  if (request.user) {
-    return true
-  }
-
-  response.status(401).json({ error: 'Authentication required.' })
-  return false
-}
-
-function serializeUser(userRecord) {
-  return {
-    id: userRecord.profile.id,
-    email: userRecord.profile.email,
-    name: userRecord.profile.name,
-    avatar: userRecord.profile.avatar,
-  }
 }
 
 function parseIsoDuration(isoDuration) {
@@ -267,123 +253,16 @@ async function buildCollection(definition, size) {
   }
 }
 
-app.post('/api/auth/signup', async (request, response) => {
+app.get('/api/user/state', requireAuth, (request, response) => {
   if (!ensureDatabase(response)) {
-    return
-  }
-
-  const name = request.body?.name?.trim()
-  const email = request.body?.email?.trim().toLowerCase()
-  const password = request.body?.password ?? ''
-
-  if (!name || !email || !password) {
-    response.status(400).json({ error: 'Name, email, and password are required.' })
-    return
-  }
-
-  try {
-    const user = await createLocalUser({ name, email, password })
-    const sessionCookie = createSessionCookie(user.profile.id, SESSION_SECRET)
-
-    response.cookie(SESSION_COOKIE, sessionCookie, {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: false,
-      maxAge: 1000 * 60 * 60 * 24 * 30,
-    })
-
-    response.status(201).json({
-      user: serializeUser(user),
-      state: user.state,
-    })
-  } catch (error) {
-    response.status(400).json({ error: error.message || 'Unable to create account.' })
-  }
-})
-
-app.post('/api/auth/login', async (request, response) => {
-  if (!ensureDatabase(response)) {
-    return
-  }
-
-  const email = request.body?.email?.trim().toLowerCase()
-  const password = request.body?.password ?? ''
-
-  if (!email || !password) {
-    response.status(400).json({ error: 'Email and password are required.' })
-    return
-  }
-
-  const user = await getUserByEmail(email)
-  if (!user) {
-    response.status(401).json({ error: 'Invalid email or password.' })
-    return
-  }
-
-  const valid = await verifyPassword(password, user.credentials.passwordHash)
-  if (!valid) {
-    response.status(401).json({ error: 'Invalid email or password.' })
-    return
-  }
-
-  const sessionCookie = createSessionCookie(user.profile.id, SESSION_SECRET)
-  response.cookie(SESSION_COOKIE, sessionCookie, {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: false,
-    maxAge: 1000 * 60 * 60 * 24 * 30,
-  })
-
-  response.json({
-    user: serializeUser(user),
-    state: user.state,
-  })
-})
-
-app.post('/api/auth/logout', (_request, response) => {
-  response.clearCookie(SESSION_COOKIE, {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: false,
-    path: '/',
-  })
-  response.status(204).end()
-})
-
-app.get('/api/auth/me', (request, response) => {
-  if (!ensureDatabase(response)) {
-    return
-  }
-
-  if (!request.user) {
-    response.status(401).json({ error: 'Not signed in.' })
-    return
-  }
-
-  response.json({
-    user: serializeUser(request.user),
-    state: request.user.state,
-  })
-})
-
-app.get('/api/user/state', (request, response) => {
-  if (!ensureDatabase(response)) {
-    return
-  }
-
-  if (!requireAuth(request, response)) {
     return
   }
 
   response.json({ state: request.user.state })
 })
 
-app.put('/api/user/state', async (request, response) => {
+app.put('/api/user/state', requireAuth, async (request, response) => {
   if (!ensureDatabase(response)) {
-    return
-  }
-
-  if (!requireAuth(request, response)) {
     return
   }
 

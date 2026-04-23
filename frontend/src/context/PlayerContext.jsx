@@ -10,12 +10,12 @@ import {
   useRef,
 } from 'react'
 import { useAuth } from './AuthContext.jsx'
+import { apiFetch } from '../lib/api.js'
 import { loadPersistedPlayerState, persistPlayerState } from '../lib/storage.js'
 import { loadYouTubeIframeApi } from '../lib/youtubeIframeApi.js'
 
 const PlayerContext = createContext(null)
 const DEFAULT_SEARCH = 'arijit singh'
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 const REPEAT_MODES = ['off', 'all', 'one']
 const persistedState = loadPersistedPlayerState()
 
@@ -365,9 +365,7 @@ export function PlayerProvider({ children }) {
     dispatch({ type: 'SEARCH_START' })
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/search?q=${encodeURIComponent(trimmedQuery)}`, {
-        credentials: 'include',
-      })
+      const response = await apiFetch(`/api/search?q=${encodeURIComponent(trimmedQuery)}`)
       if (!response.ok) {
         const payload = await response.json().catch(() => null)
         throw new Error(payload?.error ?? 'Search request failed.')
@@ -390,9 +388,7 @@ export function PlayerProvider({ children }) {
     dispatch({ type: 'HOME_START' })
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/home`, {
-        credentials: 'include',
-      })
+      const response = await apiFetch('/api/home')
       if (!response.ok) {
         const payload = await response.json().catch(() => null)
         throw new Error(payload?.error ?? 'Unable to load SoundSphere sections.')
@@ -576,9 +572,8 @@ export function PlayerProvider({ children }) {
     }
 
     saveTimeoutRef.current = window.setTimeout(() => {
-      fetch(`${API_BASE_URL}/api/user/state`, {
+      apiFetch('/api/user/state', {
         method: 'PUT',
-        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },

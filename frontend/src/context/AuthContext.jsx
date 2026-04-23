@@ -8,9 +8,9 @@ import {
   useMemo,
   useState,
 } from 'react'
+import { apiFetch, clearAuthToken, getAuthToken, setAuthToken } from '../lib/api.js'
 
 const AuthContext = createContext(null)
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
@@ -25,14 +25,21 @@ export function AuthProvider({ children }) {
   }, [])
 
   const refreshSession = useCallback(async () => {
+    const token = getAuthToken()
+    if (!token) {
+      setUser(null)
+      setSavedState(null)
+      setStatus('signed_out')
+      return
+    }
+
     setStatus('loading')
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
-        credentials: 'include',
-      })
+      const response = await apiFetch('/api/auth/me')
 
       if (!response.ok) {
+        clearAuthToken()
         setUser(null)
         setSavedState(null)
         setStatus('signed_out')
@@ -42,6 +49,7 @@ export function AuthProvider({ children }) {
       const payload = await response.json()
       applyAuthPayload(payload)
     } catch {
+      clearAuthToken()
       setUser(null)
       setSavedState(null)
       setStatus('signed_out')
@@ -57,9 +65,8 @@ export function AuthProvider({ children }) {
     setAuthError('')
 
     try {
-      const response = await fetch(`${API_BASE_URL}${path}`, {
+      const response = await apiFetch(path, {
         method: 'POST',
-        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -72,8 +79,13 @@ export function AuthProvider({ children }) {
         throw new Error(payload?.error ?? 'Authentication failed.')
       }
 
+      if (payload?.token) {
+        setAuthToken(payload.token)
+      }
+
       applyAuthPayload(payload)
     } catch (error) {
+      clearAuthToken()
       setAuthError(error.message || 'Authentication failed.')
       setStatus('signed_out')
     }
@@ -88,11 +100,11 @@ export function AuthProvider({ children }) {
   }, [authenticate])
 
   const logout = useCallback(async () => {
-    await fetch(`${API_BASE_URL}/api/auth/logout`, {
+    await apiFetch('/api/auth/logout', {
       method: 'POST',
-      credentials: 'include',
     }).catch(() => null)
 
+    clearAuthToken()
     setUser(null)
     setSavedState(null)
     setStatus('signed_out')

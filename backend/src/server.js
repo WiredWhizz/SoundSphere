@@ -12,7 +12,7 @@ initDatabase()
     }
 
     app.listen(port, () => {
-      console.log(`SoundSphere backend listening on http://localhost:${port}`)
+      console.log(`SoundSphere backend listening on port ${port}`)
     })
   })
   .catch((error) => {

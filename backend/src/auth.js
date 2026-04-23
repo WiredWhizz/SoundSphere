@@ -1,61 +1,31 @@
-import crypto from 'node:crypto'
+import jwt from 'jsonwebtoken'
 
-const SESSION_COOKIE = 'soundsphere_session'
+const DEFAULT_EXPIRY = '7d'
 
-function base64Url(input) {
-  return Buffer.from(input)
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '')
-}
+export function getJwtSecret() {
+  const secret = process.env.JWT_SECRET
 
-function signValue(value, secret) {
-  return base64Url(
-    crypto.createHmac('sha256', secret).update(value).digest(),
-  )
-}
-
-function timingSafeEqualString(a, b) {
-  const left = Buffer.from(a)
-  const right = Buffer.from(b)
-
-  if (left.length !== right.length) {
-    return false
+  if (!secret) {
+    throw new Error('JWT_SECRET is missing. Set it in the backend environment.')
   }
 
-  return crypto.timingSafeEqual(left, right)
+  return secret
 }
 
-export function createSessionCookie(userId, secret) {
-  const issuedAt = Date.now()
-  const raw = `${userId}.${issuedAt}`
-  const signature = signValue(raw, secret)
-  return `${raw}.${signature}`
+export function signAuthToken(payload) {
+  return jwt.sign(payload, getJwtSecret(), {
+    expiresIn: process.env.JWT_EXPIRES_IN || DEFAULT_EXPIRY,
+  })
 }
 
-export function readSessionCookie(cookieValue, secret) {
-  if (!cookieValue) {
+export function verifyAuthToken(token) {
+  return jwt.verify(token, getJwtSecret())
+}
+
+export function extractBearerToken(authorizationHeader = '') {
+  if (!authorizationHeader.startsWith('Bearer ')) {
     return null
   }
 
-  const parts = cookieValue.split('.')
-  if (parts.length !== 3) {
-    return null
-  }
-
-  const [userId, issuedAt, signature] = parts
-  const raw = `${userId}.${issuedAt}`
-  const expectedSignature = signValue(raw, secret)
-
-  if (!timingSafeEqualString(signature, expectedSignature)) {
-    return null
-  }
-
-  return {
-    userId,
-    issuedAt: Number(issuedAt),
-  }
+  return authorizationHeader.slice('Bearer '.length).trim() || null
 }
-
-export { SESSION_COOKIE }

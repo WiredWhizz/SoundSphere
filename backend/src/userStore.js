@@ -1,10 +1,8 @@
 import crypto from 'node:crypto'
-import { promisify } from 'node:util'
+import bcrypt from 'bcryptjs'
 import { getPool } from './db.js'
 
-const scryptAsync = promisify(crypto.scrypt)
-
-const defaultUserState = {
+export const defaultUserState = {
   queue: [],
   currentTrack: null,
   activeIndex: -1,
@@ -16,22 +14,6 @@ const defaultUserState = {
   savedPlaylistTracks: [],
   searchResults: [],
   lastQuery: '',
-}
-
-async function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString('hex')
-  const derivedKey = await scryptAsync(password, salt, 64)
-  return `${salt}:${Buffer.from(derivedKey).toString('hex')}`
-}
-
-async function verifyPassword(password, storedHash) {
-  const [salt, storedKey] = storedHash.split(':')
-  if (!salt || !storedKey) {
-    return false
-  }
-
-  const derivedKey = await scryptAsync(password, salt, 64)
-  return crypto.timingSafeEqual(Buffer.from(storedKey, 'hex'), Buffer.from(derivedKey))
 }
 
 function createAvatar(name) {
@@ -54,6 +36,7 @@ function normalizeRow(row) {
       email: row.email,
       name: row.name,
       avatar: row.avatar,
+      createdAt: row.created_at,
       updatedAt: row.updated_at,
     },
     credentials: {
@@ -66,13 +49,26 @@ function normalizeRow(row) {
   }
 }
 
-export async function createLocalUser({ name, email, password }) {
+export async function hashPassword(password) {
+  return bcrypt.hash(password, 12)
+}
+
+export async function verifyPassword(password, storedHash) {
+  return bcrypt.compare(password, storedHash)
+}
+
+export async function createUser({ email, password, name }) {
+  if (!email || !password) {
+    throw new Error('Email and password are required.')
+  }
+
   if (password.length < 6) {
     throw new Error('Password must be at least 6 characters long.')
   }
 
   const pool = await getPool()
-  const normalizedEmail = email.toLowerCase()
+  const normalizedEmail = email.trim().toLowerCase()
+  const displayName = name?.trim() || normalizedEmail.split('@')[0]
   const [existingRows] = await pool.execute(
     'SELECT id FROM users WHERE email = ? LIMIT 1',
     [normalizedEmail],
@@ -82,56 +78,39 @@ export async function createLocalUser({ name, email, password }) {
     throw new Error('An account with that email already exists.')
   }
 
-  const id = crypto.randomUUID()
+  const userId = crypto.randomUUID()
   const passwordHash = await hashPassword(password)
-  const userRecord = {
-    profile: {
-      id,
-      email: normalizedEmail,
-      name,
-      avatar: createAvatar(name),
-    },
-    credentials: {
-      passwordHash,
-    },
-    state: {
-      ...defaultUserState,
-    },
-  }
+  const state = { ...defaultUserState }
 
   await pool.execute(
     `
-      INSERT INTO users (id, email, name, avatar, password_hash, player_state)
+      INSERT INTO users (id, email, password_hash, name, avatar, player_state)
       VALUES (?, ?, ?, ?, ?, ?)
     `,
     [
-      userRecord.profile.id,
-      userRecord.profile.email,
-      userRecord.profile.name,
-      userRecord.profile.avatar,
-      userRecord.credentials.passwordHash,
-      JSON.stringify(userRecord.state),
+      userId,
+      normalizedEmail,
+      passwordHash,
+      displayName,
+      createAvatar(displayName),
+      JSON.stringify(state),
     ],
   )
 
-  return userRecord
+  return getUserById(userId)
 }
 
 export async function getUserById(userId) {
   const pool = await getPool()
-  const [rows] = await pool.execute(
-    'SELECT * FROM users WHERE id = ? LIMIT 1',
-    [userId],
-  )
+  const [rows] = await pool.execute('SELECT * FROM users WHERE id = ? LIMIT 1', [userId])
   return normalizeRow(rows[0])
 }
 
 export async function getUserByEmail(email) {
   const pool = await getPool()
-  const [rows] = await pool.execute(
-    'SELECT * FROM users WHERE email = ? LIMIT 1',
-    [email.toLowerCase()],
-  )
+  const [rows] = await pool.execute('SELECT * FROM users WHERE email = ? LIMIT 1', [
+    email.trim().toLowerCase(),
+  ])
   return normalizeRow(rows[0])
 }
 
@@ -148,15 +127,13 @@ export async function updateUserState(userId, nextState) {
   }
 
   const pool = await getPool()
-  await pool.execute(
-    'UPDATE users SET player_state = ? WHERE id = ?',
-    [JSON.stringify(mergedState), userId],
-  )
+  await pool.execute('UPDATE users SET player_state = ? WHERE id = ?', [
+    JSON.stringify(mergedState),
+    userId,
+  ])
 
   return {
     ...existingUser,
     state: mergedState,
   }
 }
-
-export { defaultUserState, verifyPassword }
