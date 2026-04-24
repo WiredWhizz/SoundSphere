@@ -29,13 +29,13 @@ function App() {
     }
   }, [bootstrap, status])
 
-  if (status === 'loading') {
-    return <main className="auth-shell"><section className="auth-panel auth-panel-secondary"><p className="subtle-text">Loading SoundSphere...</p></section></main>
-  }
+  // if (status === 'loading') {
+  //   return <main className="auth-shell"><section className="auth-panel auth-panel-secondary"><p className="subtle-text">Loading SoundSphere...</p></section></main>
+  // }
 
-  if (status !== 'authenticated') {
-    return <AuthScreen />
-  }
+  // if (status !== 'authenticated') {
+  //   return <AuthScreen />
+  // }
 
   return (
     <div className="sound-sphere-shell">
