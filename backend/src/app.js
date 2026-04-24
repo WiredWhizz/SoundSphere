@@ -261,8 +261,14 @@ app.get('/api/user/state', requireAuth, (request, response) => {
   response.json({ state: request.user.state })
 })
 
-app.put('/api/user/state', requireAuth, async (request, response) => {
+app.put('/api/user/state', optionalAuth, async (request, response) => {
   if (!ensureDatabase(response)) {
+    return
+  }
+
+  // If no authenticated user, just return default state without saving
+  if (!request.user) {
+    response.json({ state: defaultUserState })
     return
   }
 
